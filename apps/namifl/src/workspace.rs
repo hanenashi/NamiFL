@@ -39,26 +39,29 @@ impl CullApp {
 
         let mut open = self.settings.show_preview;
         if open {
-            pane("Preview", preview_rect, area, reset)
-                .open(&mut open)
-                .show(&ctx, |ui| self.preview(ui));
+            pane("Preview", preview_rect, area, reset).show(&ctx, |ui| {
+                slim_header(ui, "Preview", &mut open);
+                self.preview(ui);
+            });
             self.settings.show_preview = open;
         }
         let mut open = self.settings.show_review;
         if open {
-            pane("Review", review_rect, area, reset)
-                .open(&mut open)
-                .show(&ctx, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| self.sidebar(ui));
-                });
+            pane("Review", review_rect, area, reset).show(&ctx, |ui| {
+                slim_header(ui, "Review", &mut open);
+                let compact = ui.available_height() < 180.0;
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| self.sidebar(ui, compact));
+            });
             self.settings.show_review = open;
         }
         let mut open = self.settings.show_thumbnails;
         if open {
-            pane("Thumbnails", strip_rect, area, reset)
-                .min_height((self.settings.thumbnail_width * 0.68 + 65.0).min(area.height() - 80.0))
-                .open(&mut open)
-                .show(&ctx, |ui| self.filmstrip(ui));
+            pane("Thumbnails", strip_rect, area, reset).show(&ctx, |ui| {
+                slim_header(ui, "Thumbnails", &mut open);
+                self.filmstrip(ui);
+            });
             self.settings.show_thumbnails = open;
         }
         self.layout_reset = false;
@@ -89,7 +92,7 @@ impl CullApp {
                 ui.separator();
                 ui.checkbox(&mut self.settings.auto_advance, "Advance after tagging one photo");
                 ui.add(egui::Slider::new(&mut self.settings.thumbnail_width, 90.0..=280.0).text("Thumbnail size"));
-                ui.label(RichText::new("Drag pane title bars to rearrange. Resize from pane edges. Restore closed panes from View.").color(MUTED));
+                ui.label(RichText::new("Drag the slim pane grips to rearrange. Resize from pane edges. Restore closed panes from View.").color(MUTED));
             });
         self.show_settings = open;
     }
@@ -129,15 +132,55 @@ fn pane<'a>(name: &'static str, slot: Rect, area: Rect, reset: bool) -> egui::Wi
         .id(egui::Id::unique(("workspace-pane", name)))
         .default_pos(slot.min)
         .default_size(body_size)
-        .min_size([160.0, 90.0])
+        .min_size([140.0, 70.0])
         .constrain_to(area)
         .resizable(true)
-        .collapsible(true);
+        .title_bar(false)
+        .frame(
+            egui::Frame::new()
+                .fill(PANEL)
+                .inner_margin(3)
+                .stroke(Stroke::new(1.0, Color32::from_rgb(53, 59, 67)))
+                .corner_radius(5),
+        );
     if reset {
         window.current_pos(slot.min).fixed_size(body_size)
     } else {
         window
     }
+}
+
+fn slim_header(ui: &mut egui::Ui, name: &str, open: &mut bool) {
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 10.0), Sense::hover());
+    let center = rect.center();
+    for offset in [-5.0, 0.0, 5.0] {
+        ui.painter()
+            .circle_filled(center + Vec2::new(offset, 0.0), 1.0, MUTED);
+    }
+    response
+        .on_hover_cursor(egui::CursorIcon::Grab)
+        .on_hover_text(format!("{name} — drag to move"));
+    let close = Rect::from_center_size(Pos2::new(rect.right() - 5.0, center.y), Vec2::splat(10.0));
+    let response = ui.interact(close, ui.scope_id().with("close-pane"), Sense::click());
+    let color = if response.hovered() {
+        Color32::WHITE
+    } else {
+        MUTED
+    };
+    for flip in [-1.0, 1.0] {
+        ui.painter().line_segment(
+            [
+                close.center() + Vec2::new(-2.5, -2.5 * flip),
+                close.center() + Vec2::new(2.5, 2.5 * flip),
+            ],
+            Stroke::new(1.0, color),
+        );
+    }
+    if response.clicked() {
+        *open = false;
+    }
+    response.on_hover_text(format!("Hide {name}"));
 }
 
 fn parse_loupe_levels(input: &str) -> Result<Vec<u32>, String> {

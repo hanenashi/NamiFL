@@ -97,3 +97,12 @@ No RAW decoding occurs.
 Confirmed cleanup revalidates canonical folder scope and size/mtime for each
 regular file, reports failures, reloads the folder and updates surviving review
 fingerprints. Keeper decisions survive removal of their RAW companions.
+
+## Responsive panes (0.2.1)
+
+`thumbnails.rs` computes a strip or row-major grid from the available pane shape.
+It remembers viewport extent/offset, reveals a selected card only when necessary,
+and clamps programmatic offsets to the content bounds. Boundary navigation emits
+no new selection/scroll request. Image rendering is shared by both layouts.
+`review.rs` uses wrapping controls and a shallow-pane mode for primary actions.
+Pane windows omit native title bars and expose a thin grip/close strip instead.

@@ -23,6 +23,12 @@ const REJECT: Color32 = Color32::from_rgb(239, 143, 139);
 #[path = "workspace.rs"]
 mod workspace;
 
+#[path = "thumbnails.rs"]
+mod thumbnails;
+
+#[path = "review.rs"]
+mod review;
+
 #[derive(Clone, Copy, Default, PartialEq)]
 enum Filter {
     #[default]
@@ -69,6 +75,7 @@ pub struct CullApp {
     delete_plan: Option<DeletePlan>,
     preferences_pending: usize,
     scroll_to_current: bool,
+    thumb_viewport: Option<thumbnails::ViewportState>,
     close_after_save: bool,
     state_root: PathBuf,
 }
@@ -130,6 +137,7 @@ impl CullApp {
             delete_plan: None,
             preferences_pending: 0,
             scroll_to_current: false,
+            thumb_viewport: None,
             close_after_save: false,
             state_root,
         };
@@ -175,6 +183,8 @@ impl CullApp {
                         Ok((loaded, report)) => {
                             self.loaded = Some(loaded);
                             self.cache = ImageCache::default();
+                            self.thumb_viewport = None;
+                            self.scroll_to_current = true;
                             self.media.clear();
                             self.selected.clear();
                             self.current = 0;
@@ -220,6 +230,8 @@ impl CullApp {
                             self.zoom = 1.0;
                             self.pan = Vec2::ZERO;
                             self.cache = ImageCache::default();
+                            self.thumb_viewport = None;
+                            self.scroll_to_current = true;
                             self.media.clear();
                             self.revision = 0;
                             self.saved_revision = 0;
@@ -301,8 +313,9 @@ impl CullApp {
             self.pan = Vec2::ZERO;
             self.jpeg_variant = 0;
         }
+        let changed = self.current != index;
         self.current = index;
-        self.scroll_to_current = true;
+        self.scroll_to_current |= changed;
     }
 
     fn navigate(&mut self, delta: isize, shift: bool) {
@@ -310,9 +323,9 @@ impl CullApp {
         if visible.is_empty() {
             return;
         }
-        let position = visible.iter().position(|&i| i == self.current).unwrap_or(0);
-        let next = position.saturating_add_signed(delta).min(visible.len() - 1);
-        self.select(visible[next], false, shift);
+        if let Some(next) = thumbnails::navigation_target(&visible, self.current, delta) {
+            self.select(next, false, shift);
+        }
     }
 
     fn save(&mut self) {
@@ -558,112 +571,6 @@ impl CullApp {
         });
     }
 
-    fn sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(8.0);
-        ui.label(RichText::new("THE REVIEW").color(MUTED).size(11.0));
-        if let Some(group) = self.current_group().cloned() {
-            ui.add_space(8.0);
-            ui.label(RichText::new(&group.stem).size(23.0).strong());
-            ui.label(
-                RichText::new(format!(
-                    "{} JPEG  /  {} RAW",
-                    group.jpegs.len(),
-                    group.raws.len()
-                ))
-                .color(MUTED),
-            );
-            ui.add_space(14.0);
-            ui.colored_label(
-                decision_color(group.decision),
-                decision_text(group.decision),
-            );
-            ui.label(format!("{} selected", self.selected.len()));
-            ui.add_space(12.0);
-            let enabled = !self.selected.is_empty() && !self.opening;
-            for (decision, text) in [
-                (Decision::Keep, "Keep                         K"),
-                (Decision::Reject, "Reject                       D"),
-                (Decision::Unreviewed, "Unreviewed                 U"),
-            ] {
-                if ui
-                    .add_enabled(
-                        enabled,
-                        egui::Button::new(RichText::new(text).color(decision_color(decision)))
-                            .min_size(Vec2::new(ui.available_width(), 38.0)),
-                    )
-                    .clicked()
-                {
-                    self.mark(decision);
-                }
-            }
-            ui.add_space(8.0);
-            ui.checkbox(&mut self.settings.auto_advance, "Advance after tagging");
-            ui.add_space(14.0);
-            ui.separator();
-            ui.add_space(8.0);
-            ui.label(RichText::new("SOURCE FILES").color(MUTED).size(11.0));
-            if group.is_ambiguous() {
-                ui.colored_label(
-                    Color32::from_rgb(236, 194, 123),
-                    "Multiple variants — review the files.",
-                );
-            }
-            for (index, path) in group.jpegs.iter().enumerate() {
-                let name = path
-                    .file_name()
-                    .unwrap_or(path.as_os_str())
-                    .to_string_lossy();
-                if ui
-                    .selectable_value(&mut self.jpeg_variant, index, name)
-                    .changed()
-                {
-                    self.zoom = 1.0;
-                    self.pan = Vec2::ZERO;
-                }
-            }
-            for path in &group.raws {
-                ui.label(
-                    RichText::new(
-                        path.file_name()
-                            .unwrap_or(path.as_os_str())
-                            .to_string_lossy(),
-                    )
-                    .color(MUTED),
-                );
-            }
-            if group.jpegs.is_empty() {
-                ui.label("RAW-only group. No JPEG preview.");
-            }
-        } else {
-            ui.add_space(14.0);
-            ui.label("A quieter way to choose.");
-            ui.label(
-                RichText::new("Open a shoot, review the JPEGs, and keep your decisions here.")
-                    .color(MUTED),
-            );
-        }
-        ui.add_space(18.0);
-        ui.separator();
-        ui.add_space(12.0);
-        ui.label(
-            RichText::new("NEXT: DEVELOP IN DxO")
-                .size(11.0)
-                .color(ACCENT),
-        );
-        ui.label(
-            RichText::new(
-                "Develop your keepers externally. Export finished JPEGs to a separate folder.",
-            )
-            .color(MUTED),
-        );
-        ui.add_space(10.0);
-        ui.label(
-            RichText::new("Transport is coming next. Delete cleanup leaves keeper JPEGs.")
-                .small()
-                .color(MUTED),
-        );
-    }
-
     fn preview(&mut self, ui: &mut egui::Ui) {
         let visible = self.visible();
         if self.loaded.is_none() {
@@ -870,174 +777,6 @@ impl CullApp {
                 },
             );
         }
-    }
-
-    fn filmstrip(&mut self, ui: &mut egui::Ui) {
-        ui.style_mut().always_scroll_the_only_direction = true;
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Thumbnail size").small().color(MUTED));
-            ui.add(
-                egui::Slider::new(&mut self.settings.thumbnail_width, 90.0..=280.0)
-                    .show_value(false),
-            );
-            ui.label(RichText::new("Wheel to scroll").small().color(MUTED));
-        });
-        let card_width = self.settings.thumbnail_width;
-        let card_height = card_width * 0.68 + 30.0;
-        let visible = self.visible();
-        let mut scroll = egui::ScrollArea::horizontal()
-            .id_salt("filmstrip")
-            .auto_shrink([false, false]);
-        if self.scroll_to_current {
-            if let Some(position) = visible.iter().position(|&i| i == self.current) {
-                scroll = scroll.horizontal_scroll_offset(
-                    (position as f32 * (card_width + 10.0) - ui.available_width() / 2.0
-                        + card_width / 2.0)
-                        .max(0.0),
-                );
-            }
-            self.scroll_to_current = false;
-        }
-        scroll.show(ui, |ui| {
-            ui.horizontal(|ui| {
-                for index in visible {
-                    let (rect, response) =
-                        ui.allocate_exact_size(Vec2::new(card_width, card_height), Sense::click());
-                    if !ui.is_rect_visible(rect) {
-                        continue;
-                    }
-                    let group = &self
-                        .loaded
-                        .as_ref()
-                        .expect("visible group has folder")
-                        .groups[index];
-                    let painter = ui.painter();
-                    let selected = self.selected.contains(&index);
-                    painter.rect_filled(
-                        rect,
-                        7.0,
-                        match group.decision {
-                            Decision::Keep => Color32::from_rgb(33, 83, 57),
-                            Decision::Reject => Color32::from_rgb(96, 39, 43),
-                            Decision::Unreviewed if selected => Color32::from_rgb(36, 50, 59),
-                            Decision::Unreviewed => BACKGROUND,
-                        },
-                    );
-                    if selected {
-                        painter.rect_stroke(
-                            rect,
-                            7.0,
-                            Stroke::new(1.5, ACCENT),
-                            StrokeKind::Inside,
-                        );
-                    }
-                    let image_rect = Rect::from_min_max(
-                        rect.min + Vec2::new(6.0, 6.0),
-                        rect.max - Vec2::new(6.0, 33.0),
-                    );
-                    if let Some(path) = group.jpegs.first() {
-                        let key = ImageKey {
-                            generation: self.generation,
-                            path: path.clone(),
-                            kind: Kind::Thumbnail,
-                        };
-                        self.cache.request(&self.media, key.clone());
-                        if let Some(image) = self.cache.get(&key) {
-                            let size = image.texture.size_vec2();
-                            let scale =
-                                (image_rect.width() / size.x).min(image_rect.height() / size.y);
-                            painter.image(
-                                image.texture.id(),
-                                Rect::from_center_size(image_rect.center(), size * scale),
-                                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                                Color32::WHITE,
-                            );
-                        } else {
-                            let text = if self.cache.errors.contains_key(&key) {
-                                "Unreadable JPEG"
-                            } else {
-                                "…"
-                            };
-                            painter.text(
-                                image_rect.center(),
-                                Align2::CENTER_CENTER,
-                                text,
-                                FontId::proportional(12.0),
-                                MUTED,
-                            );
-                        }
-                    } else {
-                        painter.text(
-                            image_rect.center(),
-                            Align2::CENTER_CENTER,
-                            "RAW only",
-                            FontId::proportional(12.0),
-                            MUTED,
-                        );
-                    }
-                    let name: String = group
-                        .stem
-                        .chars()
-                        .take((card_width / 7.0) as usize)
-                        .collect();
-                    painter.text(
-                        rect.left_bottom() + Vec2::new(9.0, -17.0),
-                        Align2::LEFT_CENTER,
-                        name,
-                        FontId::proportional(11.0),
-                        Color32::WHITE,
-                    );
-                    painter.circle_filled(
-                        rect.right_top() + Vec2::new(-12.0, 12.0),
-                        4.0,
-                        decision_color(group.decision),
-                    );
-                    if group.decision != Decision::Unreviewed {
-                        painter.text(
-                            rect.right_top() + Vec2::new(-9.0, 9.0),
-                            Align2::RIGHT_TOP,
-                            if group.decision == Decision::Keep {
-                                "KEEP"
-                            } else {
-                                "REJECT"
-                            },
-                            FontId::monospace(10.0),
-                            Color32::WHITE,
-                        );
-                    }
-                    if group.is_ambiguous() {
-                        painter.text(
-                            rect.left_top() + Vec2::new(9.0, 10.0),
-                            Align2::LEFT_TOP,
-                            "MULTI",
-                            FontId::monospace(9.0),
-                            ACCENT,
-                        );
-                    }
-                    response.clone().on_hover_text(format!(
-                        "{}\n{}\nCtrl-click to add · Shift-click for range",
-                        group.stem,
-                        decision_text(group.decision)
-                    ));
-                    if response.clicked() {
-                        let modifiers = ui.input(|i| {
-                            i.events
-                                .iter()
-                                .rev()
-                                .find_map(|event| {
-                                    if let egui::Event::PointerButton { modifiers, .. } = event {
-                                        Some(*modifiers)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or(i.modifiers)
-                        });
-                        self.select(index, modifiers.command, modifiers.shift);
-                    }
-                }
-            });
-        });
     }
 
     fn status(&mut self, ui: &mut egui::Ui) {

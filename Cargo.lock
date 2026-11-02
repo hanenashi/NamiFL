@@ -1453,7 +1453,7 @@ dependencies = [
 
 [[package]]
 name = "namifl"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "dirs",
  "eframe",
@@ -1468,11 +1468,11 @@ dependencies = [
 
 [[package]]
 name = "namifl-adb"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "namifl-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
 ]

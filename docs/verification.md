@@ -6,7 +6,7 @@ Verified on Windows x64 with stable Rust 1.99.1 on 2026-11-02.
 
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets --locked -- -D warnings`
-- `cargo test --workspace --locked` — 15 tests; one manual timing test excluded by default
+- `cargo test --workspace --locked` — 18 tests; one manual timing test excluded by default
 - `cargo build --workspace --locked`
 
 Tests cover grouping without dropping orphan/alternate files, conservative export
@@ -64,3 +64,13 @@ Keeper/reject cards have green/red backgrounds. The cleanup preview for one
 keeper and one rejected group listed one rejected JPEG and both RAWs, retaining
 the keeper JPEG and excluding 26 unreviewed groups. It was cancelled; the test
 folder still contains all 28 original JPEGs and 28 RAWs.
+
+## Version 0.2.1 checks
+
+Three regression tests cover boundary arrow-key no-ops, repeated last-card reveal
+requests without overshoot/recentering, and strip/grid selection from pane shape.
+Native verification used the currently available 13 groups in E:\TEST\100_1030.
+Confirmed a three-column tall grid, a shallow review pane with all tagging controls
+visible, movement by the slim grip, resizing back to a strip with the last photo
+selected, and an extra Right key causing no movement in either layout. No source
+files were changed during these checks. The app was left in the tall-grid layout.

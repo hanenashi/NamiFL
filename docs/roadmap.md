@@ -63,3 +63,8 @@ and non-Windows desktop packaging.
 Optimized JPEG decoding/reuse, state-colored thumbnails, a thumbnail size slider,
 normal-wheel scrolling, configurable middle-click loupe levels, movable/hideable
 panes, saved preferences, version/GitHub link, and confirmed keeper-JPEG cleanup.
+
+## 1.2 — Responsive panes (implemented)
+
+Stable boundary navigation, clamped reveal scrolling, shape-responsive thumbnail
+strip/grid layouts, wrapping review controls and compact unlabeled pane grips.

@@ -27,7 +27,7 @@ Implemented:
 - Read-only, non-recursive JPEG/RAW grouping with orphan and ambiguity reporting.
 - Oriented JPEG thumbnails and previews, zoom, pan, fit/100% view and a loupe.
 - Keyboard tagging, multiselect, filters and green/red thumbnail backgrounds.
-- Thumbnail wheel scrolling and a size slider.
+- Responsive thumbnails: a horizontal strip in short panes, a wrapping grid in tall panes, wheel scrolling and a size slider.
 - Movable, resizable, hideable panes, restorable from View.
 - Settings with configurable loupe levels, version and GitHub link.
 - Explicit permanent cleanup with a preview and source revalidation.
@@ -75,7 +75,7 @@ JPEG extensions: `.jpg`, `.jpeg`; RAW: `.pef`, `.dng`, `.nef`, `.cr2`, `.cr3`,
 | Wheel / left drag | Zoom around the pointer / pan |
 | F / double click | Fit the preview |
 | Middle click in preview | Cycle loupe magnification |
-| Wheel over thumbnails | Scroll left/right |
+| Wheel over thumbnails | Scroll the strip horizontally or the grid vertically |
 | Delete | Preview whole-folder cleanup |
 | Hold right mouse button | Show loupe at the selected level |
 
@@ -83,8 +83,7 @@ Single-photo tagging advances by default; disable **Advance after tagging** to
 stay on the photo. RAW-only and ambiguous groups remain visible. Choose which
 JPEG variant to preview in the Source files panel.
 
-Loupe levels default to 100/200/500%, configurable in Settings. Drag pane title
-bars to rearrange them and edges to resize them. Close panes with X; restore
+Loupe levels default to 100/200/500%, configurable in Settings. Drag the slim, unlabeled pane grips to rearrange panes and edges to resize them. Close panes with X; restore
 from View. View > Reset pane layout restores the default arrangement. Visibility
 is saved; dragged positions reset on restart. The thumbnail size slider is also
 available in Settings.
@@ -127,3 +126,14 @@ rejected with an explicit error.
 No license has been selected yet. Public visibility is not a grant of an
 open-source license. Resolve licensing before copying legacy implementation or
 redistributing third-party binaries; no ADB binaries are included here.
+
+## Responsive pane behavior (0.2.1)
+
+Short thumbnail panes keep a single horizontal row; taller panes wrap cards into
+columns based on their width and scroll vertically. Resizing preserves visibility
+of the selected photo. Arrow keys at either end do nothing, and navigation only
+scrolls when the selected card falls outside the viewport.
+
+Pane titles are replaced by a 10-pixel grip strip with a close control. The Review
+pane wraps its summary and tagging controls; shallow panes prioritize these
+controls, while taller panes also expose source files and the DxO handoff section.

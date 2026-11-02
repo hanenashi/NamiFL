@@ -1,10 +1,12 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use crate::settings::Settings;
 use eframe::egui::{
     self, Align, Align2, Color32, FontId, Key, Layout, Pos2, Rect, RichText, Sense, Stroke,
     StrokeKind, Vec2,
 };
+use namifl_core::deletion::{DeletePlan, plan_deletion};
 use namifl_core::domain::{Decision, PhotoGroup};
 use namifl_core::review::ReviewRecord;
 
@@ -17,6 +19,9 @@ const MUTED: Color32 = Color32::from_rgb(147, 158, 174);
 const ACCENT: Color32 = Color32::from_rgb(113, 208, 219);
 const KEEP: Color32 = Color32::from_rgb(124, 212, 160);
 const REJECT: Color32 = Color32::from_rgb(239, 143, 139);
+
+#[path = "workspace.rs"]
+mod workspace;
 
 #[derive(Clone, Copy, Default, PartialEq)]
 enum Filter {
@@ -56,7 +61,13 @@ pub struct CullApp {
     filter: Filter,
     zoom: f32,
     pan: Vec2,
-    auto_advance: bool,
+    settings: Settings,
+    show_settings: bool,
+    loupe_edit: String,
+    loupe_index: usize,
+    layout_reset: bool,
+    delete_plan: Option<DeletePlan>,
+    preferences_pending: usize,
     scroll_to_current: bool,
     close_after_save: bool,
     state_root: PathBuf,
@@ -68,6 +79,21 @@ impl CullApp {
         folder: Option<PathBuf>,
         state_root: PathBuf,
     ) -> Self {
+        let (settings, settings_error) = match crate::settings::load(&state_root) {
+            Ok(settings) => (settings, None),
+            Err(error) => (
+                Settings::default(),
+                Some(format!(
+                    "Preferences could not be read; defaults are in use: {error}"
+                )),
+            ),
+        };
+        let loupe_edit = settings
+            .loupe_levels
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
         cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         cc.egui_ctx.global_style_mut(|style| {
@@ -88,7 +114,7 @@ impl CullApp {
             saved_revision: 0,
             opening: false,
             save_error: None,
-            message: None,
+            message: settings_error,
             current: 0,
             selected: BTreeSet::new(),
             anchor: 0,
@@ -96,7 +122,13 @@ impl CullApp {
             filter: Filter::All,
             zoom: 1.0,
             pan: Vec2::ZERO,
-            auto_advance: true,
+            settings,
+            show_settings: false,
+            loupe_edit,
+            loupe_index: 0,
+            layout_reset: false,
+            delete_plan: None,
+            preferences_pending: 0,
             scroll_to_current: false,
             close_after_save: false,
             state_root,
@@ -131,6 +163,47 @@ impl CullApp {
     fn collect_results(&mut self, ctx: &egui::Context) {
         while let Ok(result) = self.io.rx.try_recv() {
             match result {
+                IoResult::PreferencesSaved(result) => {
+                    self.preferences_pending = self.preferences_pending.saturating_sub(1);
+                    if let Err(error) = result {
+                        self.message = Some(format!("Preferences could not be saved: {error}"));
+                    }
+                }
+                IoResult::Deleted { result, generation } if generation == self.generation => {
+                    self.opening = false;
+                    match result {
+                        Ok((loaded, report)) => {
+                            self.loaded = Some(loaded);
+                            self.cache = ImageCache::default();
+                            self.media.clear();
+                            self.selected.clear();
+                            self.current = 0;
+                            self.anchor = 0;
+                            self.jpeg_variant = 0;
+                            self.filter = Filter::All;
+                            self.zoom = 1.0;
+                            self.pan = Vec2::ZERO;
+                            if self.loaded.as_ref().is_some_and(|l| !l.groups.is_empty()) {
+                                self.selected.insert(0);
+                            }
+                            self.message = Some(format!(
+                                "Deleted {} files. {} could not be deleted.{}",
+                                report.removed,
+                                report.failed.len(),
+                                report
+                                    .failed
+                                    .iter()
+                                    .map(|(path, error)| format!("\n{}: {error}", path.display()))
+                                    .collect::<String>()
+                            ));
+                        }
+                        Err(error) => {
+                            self.message = Some(format!(
+                                "Cleanup could not finish saving/reloading the review: {error}. Reopen the folder to check its contents."
+                            ));
+                        }
+                    }
+                }
                 IoResult::Opened { result, generation } if generation == self.generation => {
                     self.opening = false;
                     match result {
@@ -293,7 +366,7 @@ impl CullApp {
             self.revision += 1;
             self.save();
         }
-        if self.auto_advance
+        if self.settings.auto_advance
             && self.selected.len() == 1
             && let Some(next) = next
         {
@@ -316,6 +389,8 @@ impl CullApp {
             || self.opening
             || self.message.is_some()
             || self.save_error.is_some()
+            || self.delete_plan.is_some()
+            || self.show_settings
         {
             return;
         }
@@ -377,6 +452,10 @@ impl CullApp {
                             self.pan = Vec2::ZERO;
                             true
                         }
+                        Key::Delete => {
+                            self.prepare_delete();
+                            true
+                        }
                         _ => false,
                     }
                 };
@@ -417,6 +496,27 @@ impl CullApp {
                     .clicked()
                 {
                     self.open(None);
+                }
+                if ui.button("Settings").clicked() {
+                    self.show_settings = true;
+                }
+                ui.menu_button("View", |ui| {
+                    ui.checkbox(&mut self.settings.show_preview, "Preview");
+                    ui.checkbox(&mut self.settings.show_thumbnails, "Thumbnails");
+                    ui.checkbox(&mut self.settings.show_review, "Review");
+                    if ui.button("Reset pane layout").clicked() {
+                        self.settings.show_preview = true;
+                        self.settings.show_thumbnails = true;
+                        self.settings.show_review = true;
+                        self.layout_reset = true;
+                        ui.close();
+                    }
+                });
+                if ui
+                    .add_enabled(ready && self.loaded.is_some(), egui::Button::new("Delete…"))
+                    .clicked()
+                {
+                    self.prepare_delete();
                 }
             });
         });
@@ -497,7 +597,7 @@ impl CullApp {
                 }
             }
             ui.add_space(8.0);
-            ui.checkbox(&mut self.auto_advance, "Advance after tagging");
+            ui.checkbox(&mut self.settings.auto_advance, "Advance after tagging");
             ui.add_space(14.0);
             ui.separator();
             ui.add_space(8.0);
@@ -558,7 +658,7 @@ impl CullApp {
         );
         ui.add_space(10.0);
         ui.label(
-            RichText::new("Transport is coming next. RAW deletion stays manual.")
+            RichText::new("Transport is coming next. Delete cleanup leaves keeper JPEGs.")
                 .small()
                 .color(MUTED),
         );
@@ -614,6 +714,15 @@ impl CullApp {
                     self.pan = Vec2::ZERO;
                 }
                 ui.label(
+                    RichText::new(format!(
+                        "Loupe {}%",
+                        self.settings.loupe_levels
+                            [self.loupe_index % self.settings.loupe_levels.len()]
+                    ))
+                    .small()
+                    .color(ACCENT),
+                );
+                ui.label(
                     RichText::new("Wheel to zoom · drag to pan · hold right-click for loupe")
                         .small()
                         .color(MUTED),
@@ -665,9 +774,12 @@ impl CullApp {
         if self.zoom < 0.0 {
             self.zoom = 1.0 / fit;
         }
-        if response.double_clicked() || response.clicked_by(egui::PointerButton::Middle) {
+        if response.double_clicked() {
             self.zoom = 1.0;
             self.pan = Vec2::ZERO;
+        }
+        if response.clicked_by(egui::PointerButton::Middle) {
+            self.loupe_index = (self.loupe_index + 1) % self.settings.loupe_levels.len();
         }
         if response.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
@@ -698,7 +810,9 @@ impl CullApp {
             && let Some(pointer) = response.hover_pos()
         {
             let uv = (pointer - drawn.min) / drawn.size();
-            let half = Vec2::splat(100.0) / image_size;
+            let loupe_percent =
+                self.settings.loupe_levels[self.loupe_index % self.settings.loupe_levels.len()];
+            let half = Vec2::splat(100.0 / (loupe_percent as f32 / 100.0)) / image_size;
             let uv_rect = Rect::from_min_max(
                 Pos2::new(uv.x - half.x, uv.y - half.y),
                 Pos2::new(uv.x + half.x, uv.y + half.y),
@@ -707,6 +821,18 @@ impl CullApp {
                 .translate(Vec2::new(0.0, -12.0));
             painter.rect_filled(lens.expand(2.0), 2.0, ACCENT);
             painter.image(texture.id(), lens, uv_rect, Color32::WHITE);
+            painter.rect_filled(
+                Rect::from_min_size(lens.min, Vec2::new(65.0, 22.0)),
+                0.0,
+                BACKGROUND,
+            );
+            painter.text(
+                lens.min + Vec2::new(6.0, 4.0),
+                Align2::LEFT_TOP,
+                format!("{loupe_percent}%"),
+                FontId::monospace(12.0),
+                ACCENT,
+            );
         }
         let capped = if original_size[0].max(original_size[1]) > 8192 {
             " · preview capped at 8192 px"
@@ -747,12 +873,27 @@ impl CullApp {
     }
 
     fn filmstrip(&mut self, ui: &mut egui::Ui) {
+        ui.style_mut().always_scroll_the_only_direction = true;
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Thumbnail size").small().color(MUTED));
+            ui.add(
+                egui::Slider::new(&mut self.settings.thumbnail_width, 90.0..=280.0)
+                    .show_value(false),
+            );
+            ui.label(RichText::new("Wheel to scroll").small().color(MUTED));
+        });
+        let card_width = self.settings.thumbnail_width;
+        let card_height = card_width * 0.68 + 30.0;
         let visible = self.visible();
-        let mut scroll = egui::ScrollArea::horizontal().id_salt("filmstrip");
+        let mut scroll = egui::ScrollArea::horizontal()
+            .id_salt("filmstrip")
+            .auto_shrink([false, false]);
         if self.scroll_to_current {
             if let Some(position) = visible.iter().position(|&i| i == self.current) {
                 scroll = scroll.horizontal_scroll_offset(
-                    (position as f32 * 154.0 - ui.available_width() / 2.0 + 77.0).max(0.0),
+                    (position as f32 * (card_width + 10.0) - ui.available_width() / 2.0
+                        + card_width / 2.0)
+                        .max(0.0),
                 );
             }
             self.scroll_to_current = false;
@@ -761,7 +902,7 @@ impl CullApp {
             ui.horizontal(|ui| {
                 for index in visible {
                     let (rect, response) =
-                        ui.allocate_exact_size(Vec2::new(144.0, 126.0), Sense::click());
+                        ui.allocate_exact_size(Vec2::new(card_width, card_height), Sense::click());
                     if !ui.is_rect_visible(rect) {
                         continue;
                     }
@@ -775,10 +916,11 @@ impl CullApp {
                     painter.rect_filled(
                         rect,
                         7.0,
-                        if selected {
-                            Color32::from_rgb(36, 50, 59)
-                        } else {
-                            BACKGROUND
+                        match group.decision {
+                            Decision::Keep => Color32::from_rgb(33, 83, 57),
+                            Decision::Reject => Color32::from_rgb(96, 39, 43),
+                            Decision::Unreviewed if selected => Color32::from_rgb(36, 50, 59),
+                            Decision::Unreviewed => BACKGROUND,
                         },
                     );
                     if selected {
@@ -833,7 +975,11 @@ impl CullApp {
                             MUTED,
                         );
                     }
-                    let name: String = group.stem.chars().take(17).collect();
+                    let name: String = group
+                        .stem
+                        .chars()
+                        .take((card_width / 7.0) as usize)
+                        .collect();
                     painter.text(
                         rect.left_bottom() + Vec2::new(9.0, -17.0),
                         Align2::LEFT_CENTER,
@@ -846,6 +992,19 @@ impl CullApp {
                         4.0,
                         decision_color(group.decision),
                     );
+                    if group.decision != Decision::Unreviewed {
+                        painter.text(
+                            rect.right_top() + Vec2::new(-9.0, 9.0),
+                            Align2::RIGHT_TOP,
+                            if group.decision == Decision::Keep {
+                                "KEEP"
+                            } else {
+                                "REJECT"
+                            },
+                            FontId::monospace(10.0),
+                            Color32::WHITE,
+                        );
+                    }
                     if group.is_ambiguous() {
                         painter.text(
                             rect.left_top() + Vec2::new(9.0, 10.0),
@@ -939,13 +1098,22 @@ impl CullApp {
 impl eframe::App for CullApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        let preferences_before = self.settings.clone();
         self.cache.protect(self.image_key(Kind::Preview));
         self.collect_results(&ctx);
-        if ctx.input(|i| i.viewport().close_requested()) && self.revision != self.saved_revision {
+        if ctx.input(|i| i.viewport().close_requested())
+            && (self.revision != self.saved_revision
+                || self.preferences_pending > 0
+                || self.opening)
+        {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.close_after_save = self.save_error.is_none();
         }
-        if self.close_after_save && self.revision == self.saved_revision {
+        if self.close_after_save
+            && self.revision == self.saved_revision
+            && self.preferences_pending == 0
+            && !self.opening
+        {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         if let Some(path) =
@@ -967,23 +1135,22 @@ impl eframe::App for CullApp {
             .exact_size(32.0)
             .frame(egui::Frame::new().fill(BACKGROUND).inner_margin(8))
             .show(ui, |ui| self.status(ui));
-        if self.loaded.is_some() {
-            egui::Panel::bottom("strip")
-                .exact_size(154.0)
-                .frame(egui::Frame::new().fill(PANEL).inner_margin(12))
-                .show(ui, |ui| self.filmstrip(ui));
+        self.workspace(ui);
+        if preferences_before != self.settings {
+            self.preferences_pending += 1;
+            if self
+                .io
+                .tx
+                .send(IoRequest::Preferences(self.settings.clone()))
+                .is_err()
+            {
+                self.preferences_pending = self.preferences_pending.saturating_sub(1);
+                self.message =
+                    Some("Preferences could not be saved because the file worker stopped.".into());
+            }
         }
-        egui::Panel::right("review")
-            .exact_size(270.0)
-            .frame(egui::Frame::new().fill(PANEL).inner_margin(20))
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.sidebar(ui));
-            });
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(BACKGROUND).inner_margin(18))
-            .show(ui, |ui| self.preview(ui));
         if let Some(message) = self.message.clone() {
-            egui::Window::new("Could not open folder")
+            egui::Window::new("NamiFL")
                 .collapsible(false)
                 .resizable(false)
                 .show(&ctx, |ui| {

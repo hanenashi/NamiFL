@@ -42,6 +42,7 @@ impl MediaWorker {
         let worker_queue = queue.clone();
         let (results, rx) = mpsc::sync_channel(2);
         std::thread::spawn(move || {
+            let mut decoded_images: VecDeque<(u64, PathBuf, image::DynamicImage)> = VecDeque::new();
             loop {
                 let key = {
                     let (lock, ready) = &*worker_queue;
@@ -54,7 +55,25 @@ impl MediaWorker {
                     }
                     queue.requests.pop_front().expect("nonempty media queue")
                 };
-                let image = decode(&key).map_err(|e| e.to_string());
+                let image = if let Some((_, _, image)) =
+                    decoded_images.iter().find(|(generation, path, _)| {
+                        *generation == key.generation && path == &key.path
+                    }) {
+                    Ok(render(image, key.kind))
+                } else {
+                    load_image(&key.path)
+                        .map(|image| {
+                            let result = render(&image, key.kind);
+                            if image.as_bytes().len() <= 32 * 1024 * 1024 {
+                                if decoded_images.len() == 2 {
+                                    decoded_images.pop_front();
+                                }
+                                decoded_images.push_back((key.generation, key.path.clone(), image));
+                            }
+                            result
+                        })
+                        .map_err(|e| e.to_string())
+                };
                 if results.send(Decoded { key, image }).is_err() {
                     break;
                 }
@@ -67,7 +86,8 @@ impl MediaWorker {
     pub fn request(&self, key: Key) -> bool {
         let (lock, ready) = &*self.queue;
         let mut queue = lock.lock().expect("media queue poisoned");
-        if queue.requests.len() >= 24 {
+        if queue.requests.len() >= 24 || (key.kind == Kind::Thumbnail && queue.requests.len() >= 20)
+        {
             return false;
         }
         if key.kind == Kind::Preview {
@@ -97,8 +117,13 @@ impl Drop for MediaWorker {
     }
 }
 
+#[cfg(test)]
 fn decode(key: &Key) -> image::ImageResult<(ColorImage, [u32; 2])> {
-    let mut reader = image::ImageReader::open(&key.path)?;
+    Ok(render(&load_image(&key.path)?, key.kind))
+}
+
+fn load_image(path: &std::path::Path) -> image::ImageResult<image::DynamicImage> {
+    let mut reader = image::ImageReader::open(path)?;
     let mut limits = image::Limits::default();
     limits.max_alloc = Some(256 * 1024 * 1024);
     limits.max_image_width = Some(20_000);
@@ -108,18 +133,22 @@ fn decode(key: &Key) -> image::ImageResult<(ColorImage, [u32; 2])> {
     let orientation = decoder.orientation()?;
     let mut image = image::DynamicImage::from_decoder(decoder)?;
     image.apply_orientation(orientation);
+    Ok(image)
+}
+
+fn render(image: &image::DynamicImage, kind: Kind) -> (ColorImage, [u32; 2]) {
     let dimensions = [image.width(), image.height()];
-    let image = match key.kind {
-        Kind::Thumbnail => image.thumbnail(240, 180),
+    let image = match kind {
+        Kind::Thumbnail => image.thumbnail(480, 360),
         Kind::Preview if image.width().max(image.height()) > 8192 => image.thumbnail(8192, 8192),
-        Kind::Preview => image,
+        Kind::Preview => image.clone(),
     }
     .into_rgba8();
     let size = [image.width() as usize, image.height() as usize];
-    Ok((
+    (
         ColorImage::from_rgba_unmultiplied(size, image.as_raw()),
         dimensions,
-    ))
+    )
 }
 
 pub struct CachedImage {
@@ -224,6 +253,31 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "manual JPEG decode timing; set NAMIFL_BENCHMARK_JPEG"]
+    fn benchmark_jpeg_decode() {
+        let path = PathBuf::from(
+            std::env::var_os("NAMIFL_BENCHMARK_JPEG").expect("Set NAMIFL_BENCHMARK_JPEG"),
+        );
+        for kind in [Kind::Preview, Kind::Thumbnail] {
+            let start = std::time::Instant::now();
+            for _ in 0..5 {
+                std::hint::black_box(
+                    decode(&Key {
+                        generation: 0,
+                        path: path.clone(),
+                        kind,
+                    })
+                    .unwrap(),
+                );
+            }
+            eprintln!(
+                "{kind:?}: {:.1} ms average",
+                start.elapsed().as_secs_f64() * 200.0
+            );
+        }
+    }
+
+    #[test]
     fn decodes_exif_orientation_and_bounds_thumbnail() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("rotated.jpg");
@@ -248,6 +302,6 @@ mod tests {
         })
         .unwrap();
         assert_eq!(original, [400, 800]);
-        assert_eq!(image.size, [90, 180]);
+        assert_eq!(image.size, [180, 360]);
     }
 }

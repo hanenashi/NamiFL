@@ -3,6 +3,7 @@
 mod desktop;
 mod media;
 mod session;
+mod settings;
 
 use std::env;
 use std::path::Path;
@@ -14,7 +15,7 @@ fn main() -> ExitCode {
     let args: Vec<_> = env::args_os().skip(1).collect();
     if args.len() == 1 && (args[0] == "--help" || args[0] == "-h") {
         println!(
-            "NamiFL — Cull → DxO → Transport\n\nUsage:\n  namifl [cull [folder]]\n  namifl inspect <folder>\n\nThe culling prototype saves review decisions separately from source photos.\nNo source files are modified, renamed, deleted, or transferred.\nSet NAMIFL_STATE_DIR to use a separate review-session directory."
+            "NamiFL — Cull → DxO → Transport\n\nUsage:\n  namifl [cull [folder]]\n  namifl inspect <folder>\n\nThe culling prototype saves review decisions separately from source photos.\nSource files stay unchanged until you explicitly confirm Delete cleanup. Transport is not implemented.\nSet NAMIFL_STATE_DIR to use a separate review-session directory."
         );
         return ExitCode::SUCCESS;
     }

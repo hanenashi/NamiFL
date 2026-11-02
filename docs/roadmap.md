@@ -32,7 +32,8 @@ Do not assume Rust alone makes the workflow faster.
 
 Acceptance criteria:
 
-- No source file is modified, renamed or deleted in this prototype.
+- No automatic source changes occur. Explicit confirmed cleanup is available;
+  it retains keeper JPEGs and excludes unreviewed groups.
 - Every device-specific command is bound to the selected serial.
 - Navigation remains responsive while decoding, hashing or transferring.
 - Unicode, spaces, apostrophes, duplicate names, changed sources, a full phone,
@@ -48,11 +49,17 @@ Polish shortcuts and preferences, import compatible legacy settings deliberately
 test Windows packaging, choose a license, document ADB provenance/distribution,
 and run the app on real shoots before retiring either legacy utility.
 
-RAW deletion remains manual. Any future local JPEG removal or explicit renaming
-requires a separate design with preview, recovery and source revalidation.
+Confirmed cleanup removes reviewed RAWs and rejected JPEGs, retaining keeper
+JPEGs and all unreviewed groups. Automatic cleanup and renaming remain deferred.
 
 ## Deferred
 
 RAW rendering/development, DxO automation, image editing, catalogs, recursive
 phone browsing, dynamic plugins, multi-device transfers, automatic RAW deletion,
 and non-Windows desktop packaging.
+
+## 1.1 — Culling refinements (implemented)
+
+Optimized JPEG decoding/reuse, state-colored thumbnails, a thumbnail size slider,
+normal-wheel scrolling, configurable middle-click loupe levels, movable/hideable
+panes, saved preferences, version/GitHub link, and confirmed keeper-JPEG cleanup.

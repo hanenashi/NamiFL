@@ -2,14 +2,16 @@
 
 These rules apply to the current culling prototype and future transport work.
 The desktop reads JPEGs and source metadata and writes separate per-user review
-sessions. The inspect command writes nothing. Neither mode changes source photos,
-executes ADB, or performs transfers.
+sessions. The inspect command writes nothing. Only explicit confirmed desktop cleanup deletes source photos. Neither mode renames files, executes ADB, or performs transfers.
 
 ## Ownership and selection
 
 - Camera files and DxO exports are distinct inputs.
 - Keep/Reject/Unreviewed states do not themselves trigger operations.
-- RAW deletion is manual and outside the application workflow.
+- Confirmed permanent cleanup removes rejected JPEGs and reviewed RAWs, retaining
+  keeper JPEGs and all unreviewed groups. It is folder-wide, not selection/filter-wide.
+- Validate folder scope, regular-file type, size and mtime before each removal;
+  skip changed targets and report partial failures. Deletion is not transactional.
 - Export suffixes affect destination names, not source names or RAW companions.
 - Never silently discard alternate JPEGs/RAWs or resolve ambiguous groups.
 
@@ -40,5 +42,5 @@ content hashes and do not follow files through renames/moves. Normal close waits
 for pending saves; save failures require retry. Force-killing the process can lose
 unsaved decisions. Concurrent reviews of the same folder in separate instances
 are not supported: the last saved snapshot wins.
-Preferences are not persisted yet. Logs should avoid exposing personal paths unnecessarily.
+Preferences now persist separately; pane positions are session-local. Logs should avoid exposing personal paths unnecessarily.
 Do not commit personal photos, sessions, settings, device serials or logs.

@@ -1,4 +1,4 @@
-//! Background folder/session I/O. Only per-user session files are written.
+//! Background folder/session I/O and explicitly confirmed cleanup execution.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use eframe::egui;
+use namifl_core::deletion::DeletePlan;
 use namifl_core::discovery::scan_folder;
 use namifl_core::domain::PhotoGroup;
 use namifl_core::review::{FileStamp, ReviewSession, SESSION_VERSION, fingerprint};
@@ -20,6 +21,13 @@ pub struct LoadedFolder {
 }
 
 pub enum IoRequest {
+    Preferences(crate::settings::Settings),
+    Delete {
+        folder: PathBuf,
+        plan: DeletePlan,
+        session: ReviewSession,
+        generation: u64,
+    },
     Open {
         folder: Option<PathBuf>,
         generation: u64,
@@ -32,6 +40,11 @@ pub enum IoRequest {
 }
 
 pub enum IoResult {
+    PreferencesSaved(Result<(), String>),
+    Deleted {
+        result: Result<(LoadedFolder, DeleteReport), String>,
+        generation: u64,
+    },
     Opened {
         result: Result<Option<LoadedFolder>, String>,
         generation: u64,
@@ -55,6 +68,19 @@ impl SessionWorker {
         std::thread::spawn(move || {
             for request in requests {
                 let result = match request {
+                    IoRequest::Preferences(settings) => IoResult::PreferencesSaved(
+                        crate::settings::save(&root, &settings).map_err(|e| e.to_string()),
+                    ),
+                    IoRequest::Delete {
+                        folder,
+                        plan,
+                        session,
+                        generation,
+                    } => {
+                        let result = cleanup_and_reload(&root, &folder, &plan, &session)
+                            .map_err(|error| error.to_string());
+                        IoResult::Deleted { result, generation }
+                    }
                     IoRequest::Open { folder, generation } => {
                         let folder = folder.or_else(|| {
                             rfd::FileDialog::new()
@@ -88,6 +114,76 @@ impl SessionWorker {
         });
         Self { tx, rx }
     }
+}
+
+#[derive(Debug, Default)]
+pub struct DeleteReport {
+    pub removed: usize,
+    pub failed: Vec<(PathBuf, String)>,
+}
+
+fn cleanup_and_reload(
+    root: &Path,
+    folder: &Path,
+    plan: &DeletePlan,
+    previous: &ReviewSession,
+) -> io::Result<(LoadedFolder, DeleteReport)> {
+    let report = execute_deletion(folder, plan)?;
+    let mut loaded = load_folder(root, folder)?;
+    for group in &mut loaded.groups {
+        let files = &loaded.stamps[&group.stem];
+        if let Some(old) = previous.records.get(&group.stem)
+            && files.iter().all(|file| old.files.contains(file))
+        {
+            group.decision = old.decision;
+        }
+        loaded.session.records.insert(
+            group.stem.clone(),
+            namifl_core::review::ReviewRecord {
+                files: files.clone(),
+                decision: group.decision,
+            },
+        );
+    }
+    save_session(root, &loaded.session)?;
+    Ok((loaded, report))
+}
+
+fn execute_deletion(folder: &Path, plan: &DeletePlan) -> io::Result<DeleteReport> {
+    let folder = folder.canonicalize()?;
+    let mut report = DeleteReport::default();
+    for expected in &plan.files {
+        let result = (|| -> io::Result<()> {
+            let actual_path = expected.path.canonicalize()?;
+            if actual_path.parent() != Some(folder.as_path()) {
+                return Err(io::Error::other(
+                    "File is no longer directly inside the reviewed folder",
+                ));
+            }
+            let metadata = fs::symlink_metadata(&expected.path)?;
+            let modified_ns = metadata
+                .modified()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(io::Error::other)?
+                .as_nanos();
+            if !metadata.file_type().is_file()
+                || metadata.len() != expected.bytes
+                || modified_ns != expected.modified_ns
+            {
+                return Err(io::Error::other(
+                    "Source changed since review; reopen the folder",
+                ));
+            }
+            fs::remove_file(&expected.path)
+        })();
+        match result {
+            Ok(()) => report.removed += 1,
+            Err(error) => report
+                .failed
+                .push((expected.path.clone(), error.to_string())),
+        }
+    }
+    Ok(report)
 }
 
 fn session_path(root: &Path, folder: &Path) -> PathBuf {
@@ -148,6 +244,82 @@ mod tests {
     use super::*;
     use namifl_core::domain::Decision;
     use namifl_core::review::ReviewRecord;
+
+    #[test]
+    fn cleanup_preserves_keeper_jpeg_and_skips_a_changed_source() {
+        let photos = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        for name in [
+            "keep.jpg",
+            "keep.dng",
+            "reject.jpg",
+            "reject.dng",
+            "unreviewed.jpg",
+        ] {
+            fs::write(photos.path().join(name), b"fixture").unwrap();
+        }
+        let mut loaded = load_folder(state.path(), photos.path()).unwrap();
+        for group in &mut loaded.groups {
+            group.decision = match group.stem.as_str() {
+                "keep" => Decision::Keep,
+                "reject" => Decision::Reject,
+                _ => Decision::Unreviewed,
+            };
+            loaded.session.records.insert(
+                group.stem.clone(),
+                ReviewRecord {
+                    files: loaded.stamps[&group.stem].clone(),
+                    decision: group.decision,
+                },
+            );
+        }
+        let plan = namifl_core::deletion::plan_deletion(&loaded.groups, &loaded.stamps).unwrap();
+        fs::write(
+            photos.path().join("reject.dng"),
+            b"changed source after plan",
+        )
+        .unwrap();
+        let (after, report) =
+            cleanup_and_reload(state.path(), photos.path(), &plan, &loaded.session).unwrap();
+        assert_eq!(report.removed, 2);
+        assert_eq!(report.failed.len(), 1);
+        assert!(photos.path().join("keep.jpg").exists());
+        assert!(!photos.path().join("keep.dng").exists());
+        assert!(!photos.path().join("reject.jpg").exists());
+        assert!(photos.path().join("reject.dng").exists());
+        assert!(photos.path().join("unreviewed.jpg").exists());
+        assert_eq!(
+            after
+                .groups
+                .iter()
+                .find(|g| g.stem == "keep")
+                .unwrap()
+                .decision,
+            Decision::Keep
+        );
+    }
+
+    #[test]
+    fn cleanup_refuses_targets_outside_the_reviewed_folder() {
+        let photos = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let path = outside.path().join("outside.jpg");
+        fs::write(&path, b"leave this file").unwrap();
+        let group = PhotoGroup {
+            stem: "outside".into(),
+            jpegs: vec![path.clone()],
+            raws: Vec::new(),
+            decision: Decision::Reject,
+        };
+        let plan = DeletePlan {
+            files: fingerprint(&group).unwrap(),
+            ..Default::default()
+        };
+        let report = execute_deletion(photos.path(), &plan).unwrap();
+        assert_eq!(report.removed, 0);
+        assert_eq!(report.failed.len(), 1);
+        assert_eq!(fs::read(path).unwrap(), b"leave this file");
+    }
 
     #[test]
     fn session_round_trip_preserves_sources_and_resets_a_changed_group() {

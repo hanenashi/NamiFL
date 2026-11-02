@@ -13,7 +13,8 @@ between. The existing repositories remain independent and unchanged.
 2. Edit and develop the chosen photographs in DxO outside NamiFL.
 3. Export finished JPEGs from DxO into a separate folder.
 4. Return to NamiFL to select those exports and send them to Android.
-5. Delete RAWs manually when ready. NamiFL must not automatically delete RAWs.
+5. Optionally confirm Delete cleanup: retain keeper JPEGs; remove rejected JPEGs
+   and RAWs from keeper/rejected groups. Unreviewed groups are excluded.
 
 Camera JPEGs and developed exports are distinct selections. A keeper decision is
 not a deletion instruction, and export naming must not silently rename originals.
@@ -25,17 +26,21 @@ Implemented:
 - An egui/eframe desktop culling workspace with UI-independent core types.
 - Read-only, non-recursive JPEG/RAW grouping with orphan and ambiguity reporting.
 - Oriented JPEG thumbnails and previews, zoom, pan, fit/100% view and a loupe.
-- Keyboard Keep/Reject/Unreviewed tagging, multiselect and decision filters.
-- Background decoding with bounded queues and a bounded texture cache.
+- Keyboard tagging, multiselect, filters and green/red thumbnail backgrounds.
+- Thumbnail wheel scrolling and a size slider.
+- Movable, resizable, hideable panes, restorable from View.
+- Settings with configurable loupe levels, version and GitHub link.
+- Explicit permanent cleanup with a preview and source revalidation.
+- Optimized background JPEG decoding, bounded queues/caches and decoded-image reuse.
 - Background, versioned review-session saves in a per-user directory.
 - Pure JPEG export draft planning with destination suffixes and duplicate checks.
 - An ADB argument builder that requires an explicit device serial.
 - A read-only `inspect` command and Windows/Linux CI checks.
 
 Not implemented: actual ADB execution, remote conflict resolution, transfer
-verification, EXIF exposure tooltips or local deletion. The culling prototype
-does not modify, rename, delete or transfer source photos. It writes only review
-sessions. This is not yet a replacement for both existing apps.
+verification, EXIF exposure tooltips or Android transfers. The prototype writes review
+sessions and preferences; it deletes source files only after explicit cleanup
+confirmation. It does not rename source files. This is not yet a replacement for both existing apps.
 
 ## Run
 
@@ -52,7 +57,8 @@ cargo run -p namifl -- inspect "C:\Photos\Shoot"
 The desktop accepts a folder from the Open button, Ctrl+O, a dropped folder, or
 the `cull` argument. It decodes JPEGs and records review decisions separately.
 The `inspect` command reads directory entries only and writes nothing.
-Neither mode follows symlinks, recurses, changes photos or contacts a phone.
+Neither mode follows symlinks, recurses or contacts a phone. Only confirmed
+desktop cleanup deletes source files.
 JPEG extensions: `.jpg`, `.jpeg`; RAW: `.pef`, `.dng`, `.nef`, `.cr2`, `.cr3`,
 `.arw`, `.orf`, `.rw2`, `.raf`. RAW recognition does not imply RAW decoding.
 
@@ -67,18 +73,34 @@ JPEG extensions: `.jpg`, `.jpeg`; RAW: `.pef`, `.dng`, `.nef`, `.cr2`, `.cr3`,
 | Ctrl+A | Select all groups in the current filter |
 | Ctrl+S | Retry/save the review immediately; decisions also autosave |
 | Wheel / left drag | Zoom around the pointer / pan |
-| F / middle click / double click | Fit the preview |
-| Hold right mouse button | Show a 100% loupe |
+| F / double click | Fit the preview |
+| Middle click in preview | Cycle loupe magnification |
+| Wheel over thumbnails | Scroll left/right |
+| Delete | Preview whole-folder cleanup |
+| Hold right mouse button | Show loupe at the selected level |
 
 Single-photo tagging advances by default; disable **Advance after tagging** to
 stay on the photo. RAW-only and ambiguous groups remain visible. Choose which
 JPEG variant to preview in the Source files panel.
+
+Loupe levels default to 100/200/500%, configurable in Settings. Drag pane title
+bars to rearrange them and edges to resize them. Close panes with X; restore
+from View. View > Reset pane layout restores the default arrangement. Visibility
+is saved; dragged positions reset on restart. The thumbnail size slider is also
+available in Settings.
+
+Delete is permanent and applies to all reviewed groups in the folder, regardless
+of the filter or selection. Its confirmation lists every target: rejected JPEGs
+and RAWs from keeper/rejected groups. Keeper JPEGs and all unreviewed groups are
+retained. Changed/out-of-folder targets are skipped and failures are reported.
+There is no undo or recycle-bin step.
 
 Sessions live in `%LOCALAPPDATA%\NamiFL\sessions` on Windows (the platform-local
 data directory elsewhere). Set `NAMIFL_STATE_DIR` to use a separate session
 directory, such as for testing. Decisions restore only when the canonical folder,
 source paths, file sizes and modification times match. Renamed/moved/changed
 groups return to Unreviewed. These metadata checks are not content verification.
+Unchanged surviving keeper JPEGs retain their decisions after confirmed cleanup.
 The prototype does not watch folders for external changes; reopen the folder to
 rescan after adding, removing or editing source files.
 

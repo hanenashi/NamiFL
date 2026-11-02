@@ -8,16 +8,37 @@ Windows is the first desktop target. The core is platform-independent.
 
 ## Present code
 
-`apps/namifl` depends on `namifl-core`. `namifl-adb` is an independent adapter stub.
-There is no GUI dependency or process runner yet. Keep this initial graph small;
-do not create empty crates for every anticipated service.
+`apps/namifl` composes an egui/eframe desktop UI with `namifl-core`.
+`namifl-adb` is an independent adapter stub; no ADB processes run yet.
+The desktop uses the Glow renderer, native folder dialogs and system font fallback
+for filenames. There are no empty service crates.
+
+`desktop.rs` owns selection, filtering, viewport interaction and worker messages.
+`media.rs` has a single decoder worker, at most 24 queued requests and two queued
+results. Visible thumbnails are requested lazily. Full previews take priority;
+one next-image preview is prefetched when the current image is small enough.
+Texture storage is bounded to 64 entries and a 160 MiB budget, except that the
+active preview is pinned and may exceed the budget alongside a small number of
+thumbnail uploads. Oversized adjacent previews are declined rather than evicting
+the active image repeatedly. There is no disk image cache.
+
+`session.rs` owns a separate I/O worker for folder selection/scanning, metadata
+fingerprinting, restoration and saves. Grouping is published once directory
+discovery/fingerprinting finishes; JPEG decoding does not block opening the list.
+Session filenames are SHA-256 digests of the canonical folder's native path bytes.
+Records use exact stems and sorted source-path/size/mtime fingerprints. This is
+stable local identity across restarts, not a portable catalog ID or content hash.
+All source variants participate in the fingerprint; changed membership resets the
+decision. Saves use a flushed/synced temporary file and atomic replacement. A
+failed save is visible, blocks folder switching, and prevents a normal close
+until retried. Corrupt/future-version sessions block loading and are not replaced.
 
 The core groups regular files by exact stem within one folder. It preserves all
 JPEG and RAW variants, including orphans, rather than choosing a last-seen file.
 Extensions are case-insensitive; stems are case-sensitive. Non-UTF-8 stems are
-reported as unsupported. Review decisions default to Unreviewed. Group membership
-is a discovery result, not durable identity: stable asset IDs and source
-fingerprints are required before saved sessions and mutation support.
+reported as unsupported. Review decisions default to Unreviewed. No photo
+mutation support exists. Metadata fingerprints cannot detect same-size changes
+that retain the modification time and are unsuitable for transfer verification.
 
 Export planning accepts an explicit JPEG selection from the developed export
 folder. It returns unchanged source paths plus destination names. Current checks
@@ -35,9 +56,10 @@ are draft checks, not a guarantee of valid Windows filenames or remote availabil
 | Persistence | Versioned preferences and review sessions; atomic writes |
 | Desktop | Cull/Transport views, keyboard navigation, plan previews and job status |
 
-Add media/jobs/persistence modules when their first behavior is implemented. Keep
-UI framework types out of domain objects and plans. The initial GUI candidate is
-egui/eframe, subject to a viewport spike; this is not a committed dependency yet.
+Media and session workers now live in the desktop application; extract them only
+when reuse justifies a separate crate. Keep UI framework types out of core domain
+objects and plans. egui/eframe is the viewport prototype dependency; real photo
+workflow testing still decides whether it is suitable long-term.
 
 ## Intended flow
 

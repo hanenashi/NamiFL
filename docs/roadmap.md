@@ -1,17 +1,19 @@
 # Roadmap
 
-## 0 — Foundation (this skeleton)
+## 0 — Foundation (complete)
 
 Workspace, read-only discovery, decision model, export draft planning, serial-bound
 ADB argument construction, developer harness, documentation and CI.
 
-## 1 — Cull viewport prototype
+## 1 — Cull viewport prototype (implemented; real-shoot evaluation pending)
 
-- Add a desktop viewport spike; evaluate egui/eframe on actual camera JPEGs.
-- Decode oriented JPEGs on workers, with bounded thumbnails and adjacent-image prefetch.
-- Add keyboard Keep/Reject/Unreviewed tagging, multiselect, zoom, pan and loupe.
-- Add stable asset IDs, source fingerprints and versioned review-session persistence.
-- Display RAW-only groups and ambiguous variants explicitly.
+- [x] Desktop viewport using egui/eframe.
+- [x] Worker-decoded oriented JPEGs, bounded thumbnails and next-image prefetch.
+- [x] Keyboard Keep/Reject/Unreviewed tagging, multiselect, zoom, pan and loupe.
+- [x] Stable path-based group identity, metadata fingerprints and versioned sessions.
+- [x] Explicit RAW-only groups and ambiguous variants.
+- [ ] Evaluate actual camera JPEGs and compare interaction/performance with choseek1.
+- [ ] Decide color-management requirements and original-pixel handling above the preview cap.
 
 Use the same photo set as choseek1 to compare first-image latency, navigation,
 memory consumption, keyboard behavior, orientation and fit/100% viewing.
@@ -19,7 +21,7 @@ Do not assume Rust alone makes the workflow faster.
 
 ## 2 — First integrated prototype: Cull → DxO → Transport
 
-- Complete a review, close/reopen, and restore decisions.
+- Complete a review, close/reopen, and restore decisions (available in milestone 1).
 - Develop selected photographs externally in DxO and export JPEGs separately.
 - Open the exported folder as an independent Transport selection.
 - Discover ADB, select a device, and show unauthorized/offline states.

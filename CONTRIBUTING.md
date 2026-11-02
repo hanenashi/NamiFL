@@ -1,8 +1,10 @@
 # Development
 
 Use stable Rust; `rust-toolchain.toml` requests rustfmt and Clippy. The current
-workspace has no external crate dependencies. Commit `Cargo.lock` for reproducible
-application builds.
+desktop uses egui/eframe, image, native dialogs and per-user session storage.
+Commit `Cargo.lock` for reproducible application builds. On Debian/Ubuntu, install
+`libfontconfig1-dev`, `libxkbcommon-dev`, `libwayland-dev` and `libdbus-1-dev` for
+desktop builds; CI installs these explicitly.
 
 ```powershell
 cargo fmt --all -- --check
@@ -12,7 +14,8 @@ cargo run -p namifl -- --help
 ```
 
 Start with `docs/architecture.md`, `docs/roadmap.md` and `docs/safety.md`.
-Do not introduce a GUI dependency before testing the photo viewport candidate.
+The desktop defaults to the culling workspace; use `inspect` for headless checks.
+Set `NAMIFL_STATE_DIR` to an isolated directory during UI testing.
 Keep domain models free from UI image handles, widgets and framework events.
 Use small behavior-focused tests for grouping, planning and failure handling;
 future ADB tests should use a fake process boundary before a real device.

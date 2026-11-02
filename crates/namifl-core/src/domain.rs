@@ -1,7 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Review state never implies a filesystem operation.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Decision {
     #[default]
     Unreviewed,

@@ -1,7 +1,9 @@
 # File and transfer rules
 
-These are requirements for future implementation; the skeleton only inspects
-folders and builds draft data. It performs no transfers or file mutations.
+These rules apply to the current culling prototype and future transport work.
+The desktop reads JPEGs and source metadata and writes separate per-user review
+sessions. The inspect command writes nothing. Neither mode changes source photos,
+executes ADB, or performs transfers.
 
 ## Ownership and selection
 
@@ -32,7 +34,11 @@ conflicts. Do not treat case folding as a complete Unicode collision solution.
 
 ## Persistence and recovery
 
-Store preferences/sessions in a per-user application directory with versioned
-schemas and atomic replacement. A session must identify the actual source file,
-not just its list index. Logs should avoid exposing personal paths unnecessarily.
+Review sessions currently use versioned schemas, atomic replacement and
+path/size/mtime fingerprints in a per-user application directory. These are not
+content hashes and do not follow files through renames/moves. Normal close waits
+for pending saves; save failures require retry. Force-killing the process can lose
+unsaved decisions. Concurrent reviews of the same folder in separate instances
+are not supported: the last saved snapshot wins.
+Preferences are not persisted yet. Logs should avoid exposing personal paths unnecessarily.
 Do not commit personal photos, sessions, settings, device serials or logs.
